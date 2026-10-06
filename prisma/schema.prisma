@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+    id          String    @id @default(uuid())
+    created_at  DateTime  @default(now())
+    name        String
+    surname     String
+    phone       String
+    email       String     @unique
+    password    String
+    role        String     @default("client")
+    bookings    Booking[]
+}
+
+model Procedure {
+    id          Int       @id @default(autoincrement())
+    created_at  DateTime  @default(now())
+    title       String
+    description String
+    price       Int
+    duration    String
+    category    String
+    imgUrl      String
+    bookings    Booking[]
+}
+
+model Specialist {
+    id          Int       @id @default(autoincrement())
+    created_at  DateTime  @default(now())
+    name        String
+    surname     String
+    specialty   String
+    experience  String
+    description String
+    imgUrl      String
+}
+
+model Certificate {
+    id          Int       @id @default(autoincrement())
+    created_at  DateTime  @default(now())
+    imgUrl      String   
+    altText     String
+}
+
+model Booking {
+    id          String    @id @default(uuid())
+    created_at  DateTime  @default(now())
+    userId      String 
+    user        User      @relation(fields: [userId], references: [id])
+    procedureId Int
+    procedure   Procedure @relation(fields: [procedureId], references: [id])
+    date        DateTime  @db.Date
+    time        DateTime  @db.Time
+    status      String    @default("active")
+}
