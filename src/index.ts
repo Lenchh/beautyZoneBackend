@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
@@ -62,6 +63,38 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+export interface AuthRequest extends Request {
+  user?: { id: string; role: string };
+}
+
+//Перевіряє чи є взагалі токен
+export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'Доступ заборонено. Немає токена.' });
+  }
+  const jwtSecret = process.env.JWT_SECRET || 'fallback_secret';
+  jwt.verify(token, jwtSecret, (err, decoded) => {
+    if (err) {
+      return res.status(403).json({ error: 'Токен недійсний або прострочений.' });
+    }
+    req.user = decoded as { id: string; role: string };
+    next();
+  });
+};
+
+//Перевіряє чи є користувач адміном
+export const requireAdmin = (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Спочатку потрібно авторизуватися.' });
+  }
+  if (req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Доступ заборонено. Тільки для адміністраторів.' });
+  }
+  next();
+};
+
 //GET
 app.get('/api/procedures', async (req, res) => {
   try {
@@ -108,11 +141,10 @@ app.get('/api/bookings', async (req, res) => {
   }
 });
 
-app.get('/api/users/:id', async (req, res) => {
+app.get('/api/users/profile', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const { id } = req.params;
     const user = await prisma.user.findUnique({
-      where: { id: String(id) },
+      where: { id: req.user?.id! },
       select: {
         id: true,
         created_at: true,
@@ -136,14 +168,32 @@ app.get('/api/users/:id', async (req, res) => {
 //POST
 app.post('/api/bookings', async (req, res) => {
   try {
-    const { userId, procedureId, date, time } = req.body;
+    const { procedureId, date, time, guestName, guestSurname, guestPhone } = req.body;
+    let userId: string | null = null;
+    const authHeader = req.headers['authorization'];
+    if (authHeader) {
+      const token = authHeader.split(' ')[1];
+      const jwtSecret = process.env.JWT_SECRET || 'fallback_secret';
+      try {
+        const decoded = jwt.verify(token!, jwtSecret) as unknown as { id: string };
+        userId = decoded.id;
+      } catch (err) {
+        return res.status(401).json({ error: 'Токен недійсний.' });
+      }
+    }
+    if (!userId && (!guestName || !guestPhone)) {
+      return res.status(400).json({ error: 'Для запису необхідні імʼя та телефон' });
+    }
     const newBooking = await prisma.booking.create({
       data: {
-        userId,
+        userId: userId,
         procedureId,
         date: new Date(date),
         time: new Date(time),
         status: 'active',
+        guestName: userId ? null : guestName,
+        guestSurname: userId ? null : guestSurname,
+        guestPhone: userId ? null : guestPhone,
       },
     });
     res.status(201).json(newBooking);
@@ -154,9 +204,22 @@ app.post('/api/bookings', async (req, res) => {
 });
 
 //PATCH
-app.patch('/api/bookings', async (req, res) => {
+app.patch('/api/bookings', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const { id, status } = req.body;
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+
+    const booking = await prisma.booking.findUnique({
+      where: { id: String(id) },
+    });
+    if (!booking) {
+      return res.status(404).json({ error: 'Запис не знайдено' });
+    }
+    if (userRole !== 'admin' && booking.userId !== userId) {
+      return res.status(403).json({ error: 'Ви не можете скасувати чужий запис' });
+    }
+
     const updatedBooking = await prisma.booking.update({
       where: { id: String(id) },
       data: { status },
@@ -168,12 +231,12 @@ app.patch('/api/bookings', async (req, res) => {
   }
 });
 
-app.patch('/api/users/:id', async (req, res) => {
+app.patch('/api/users/profile', authenticateToken, async (req: AuthRequest, res) => {
   try {
-    const { id } = req.params;
+    const userId = req.user?.id;
     const { name, surname, phone, email } = req.body;
     const updatedUser = await prisma.user.update({
-      where: { id: String(id) },
+      where: { id: userId! },
       data: { name, surname, phone, email },
     });
     const { password, ...userWithoutPassword } = updatedUser;
@@ -184,6 +247,45 @@ app.patch('/api/users/:id', async (req, res) => {
     }
     console.error('Помилка при оновленні профілю: ', error);
     res.status(500).json({ error: 'Не вдалося оновити профіль.' });
+  }
+});
+
+//ADMIN ROUTES
+app.post('/api/procedures', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { category, description, duration, imgUrl, price, title } = req.body;
+    const newProcedure = await prisma.procedure.create({
+      data: {
+        category,
+        description,
+        duration,
+        imgUrl,
+        price: Number(price),
+        title,
+      },
+    });
+    res.status(201).json(newProcedure);
+  } catch (error) {
+    res.status(500).json({ error: 'Не вдалося створити процедуру' });
+  }
+});
+
+app.post('/api/specialists', authenticateToken, requireAdmin, async (req: AuthRequest, res) => {
+  try {
+    const { description, imgUrl, experience, name, specialty, surname } = req.body;
+    const newSpecialist = await prisma.specialist.create({
+      data: {
+        description,
+        imgUrl,
+        experience,
+        name,
+        specialty,
+        surname,
+      },
+    });
+    res.status(201).json(newSpecialist);
+  } catch (error) {
+    res.status(500).json({ error: 'Не вдалося додати фахівця' });
   }
 });
 

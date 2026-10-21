@@ -49,13 +49,16 @@ model Certificate {
 }
 
 model Booking {
-    id          String    @id @default(uuid())
-    created_at  DateTime  @default(now())
-    userId      String 
-    user        User      @relation(fields: [userId], references: [id])
-    procedureId Int
-    procedure   Procedure @relation(fields: [procedureId], references: [id])
-    date        DateTime  @db.Date
-    time        DateTime  @db.Time
-    status      String    @default("active")
+    id            String    @id @default(uuid())
+    created_at    DateTime  @default(now())
+    userId        String?
+    user          User?     @relation(fields: [userId], references: [id])
+    procedureId   Int
+    procedure     Procedure @relation(fields: [procedureId], references: [id])
+    date          DateTime  @db.Date
+    time          DateTime  @db.Time
+    status        String    @default("active")
+    guestName     String?
+    guestSurname  String?
+    guestPhone    String?
 }
