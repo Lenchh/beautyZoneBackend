@@ -126,12 +126,27 @@ app.get('/api/certificates', async (req, res) => {
   }
 });
 
-app.get('/api/bookings', async (req, res) => {
+app.get('/api/bookings', authenticateToken, async (req: AuthRequest, res) => {
   try {
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+    const whereCondition = userRole === 'admin' ? {} : { userId: String(userId) };
     const bookings = await prisma.booking.findMany({
+      where: whereCondition,
       include: {
-        user: true,
+        user: {
+          select: {
+            id: true,
+            name: true,
+            surname: true,
+            email: true,
+            phone: true,
+          },
+        },
         procedure: true,
+      },
+      orderBy: {
+        date: 'desc',
       },
     });
     res.json(bookings);
