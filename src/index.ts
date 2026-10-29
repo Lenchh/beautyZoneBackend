@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import cors from 'cors';
 import type { Request, Response, NextFunction } from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
@@ -10,6 +11,13 @@ const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
 const prisma = new PrismaClient({ adapter });
 const app = express();
 const PORT = 3000;
+
+app.use(
+  cors({
+    origin: 'http://localhost:5173',
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 
@@ -130,6 +138,16 @@ app.get('/api/bookings', authenticateToken, async (req: AuthRequest, res) => {
   try {
     const userId = req.user?.id;
     const userRole = req.user?.role;
+    const now = new Date();
+    await prisma.booking.updateMany({
+      where: {
+        status: 'active',
+        time: { lt: now },
+      },
+      data: {
+        status: 'completed',
+      },
+    });
     const whereCondition = userRole === 'admin' ? {} : { userId: String(userId) };
     const bookings = await prisma.booking.findMany({
       where: whereCondition,
@@ -141,6 +159,7 @@ app.get('/api/bookings', authenticateToken, async (req: AuthRequest, res) => {
             surname: true,
             email: true,
             phone: true,
+            role: true,
           },
         },
         procedure: true,
@@ -180,9 +199,48 @@ app.get('/api/users/profile', authenticateToken, async (req: AuthRequest, res) =
   }
 });
 
+app.get('/api/bookings/available-times', async (req, res) => {
+  try {
+    const { date, procedureId } = req.query;
+    if (!date || !procedureId) {
+      return res.status(400).json({ error: 'Не вказана дата або ID процедури' });
+    }
+    const allTimeSlots = ['09:00', '10:15', '11:30', '12:45', '14:00', '15:15', '16:30', '17:45', '19:00'];
+    const searchDate = new Date(String(date));
+    const startOfDay = new Date(
+      Date.UTC(searchDate.getUTCFullYear(), searchDate.getUTCMonth(), searchDate.getUTCDate(), 0, 0, 0)
+    );
+
+    const endOfDay = new Date(
+      Date.UTC(searchDate.getUTCFullYear(), searchDate.getUTCMonth(), searchDate.getUTCDate(), 23, 59, 59, 999)
+    );
+    const bookings = await prisma.booking.findMany({
+      where: {
+        procedureId: Number(procedureId),
+        status: 'active',
+        date: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+      },
+      select: { time: true },
+    });
+    const bookedTimes = bookings.map((b) => {
+      const hours = b.time.getUTCHours().toString().padStart(2, '0');
+      const minutes = b.time.getUTCMinutes().toString().padStart(2, '0');
+      return `${hours}:${minutes}`;
+    });
+    const availableSlots = allTimeSlots.filter((slot) => !bookedTimes.includes(slot));
+    res.json(availableSlots);
+  } catch (error) {
+    res.status(500).json({ error: 'Помилка завантаження вільного часу.' });
+  }
+});
+
 //POST
 app.post('/api/bookings', async (req, res) => {
   try {
+    console.log('Дані з фронтенду:', req.body);
     const { procedureId, date, time, guestName, guestSurname, guestPhone } = req.body;
     let userId: string | null = null;
     const authHeader = req.headers['authorization'];

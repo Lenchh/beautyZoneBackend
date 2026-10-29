@@ -55,8 +55,8 @@ model Booking {
     user          User?     @relation(fields: [userId], references: [id])
     procedureId   Int
     procedure     Procedure @relation(fields: [procedureId], references: [id])
-    date          DateTime  @db.Date
-    time          DateTime  @db.Time
+    date          DateTime  
+    time          DateTime  
     status        String    @default("active")
     guestName     String?
     guestSurname  String?
